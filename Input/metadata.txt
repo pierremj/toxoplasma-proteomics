@@ -1,0 +1,12 @@
+sample	treatment
+ctrl.turbo.rah.nobiotin	ctrl
+ctrl.turbo.cyto.nobiotin	ctrl
+ctrl.noturbo.nobiotin	ctrl
+turborah.toxo.r1	turborah.toxo
+turborah.mock.r1	turborah.mock
+turborah.toxo.r2	turborah.toxo
+turborah.mock.r2	turborah.mock
+turborah.toxo.r3	turborah.toxo
+turbocyto.toxo.r1	turbocyto.toxo
+turborah.toxo.r4	turborah.toxo
+turbocyto.toxo.r2	turbocyto.toxo

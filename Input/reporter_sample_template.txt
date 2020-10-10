@@ -1,0 +1,3 @@
+126C	127N	127C	128N	128C	129N	129C	130N	130C	131N	131C	126C.127C.127N
+ctrl.turbo.rah.nobiotin	ctrl.turbo.cyto.nobiotin	ctrl.noturbo.nobiotin	turborah.toxo.r1	turborah.mock.r1	turborah.toxo.r2	turborah.mock.r2	turborah.toxo.r3	turbocyto.toxo.r1	turborah.toxo.r4	turbocyto.toxo.r2	control.mean
+20191004_Toxoplasma_PMV_TMT	20191004_Toxoplasma_PMV_TMT	20191004_Toxoplasma_PMV_TMT	20191004_Toxoplasma_PMV_TMT	20191004_Toxoplasma_PMV_TMT	20191004_Toxoplasma_PMV_TMT	20191004_Toxoplasma_PMV_TMT	20191004_Toxoplasma_PMV_TMT	20191004_Toxoplasma_PMV_TMT	20191004_Toxoplasma_PMV_TMT	20191004_Toxoplasma_PMV_TMT	20191004_Toxoplasma_PMV_TMT

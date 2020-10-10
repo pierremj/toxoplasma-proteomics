@@ -1,0 +1,310 @@
+---
+title: "Toxoplasma TMT Analysis"
+author: "Pierre Michel Jean Beltran"
+date: "10/4/2019"
+output: html_document
+---
+	
+```{r setup}
+library(tidyverse)
+library(cmapR)
+library(FactoMineR)
+library(factoextra)
+library(ggrepel)
+library(pheatmap)
+library(limma)
+library(GGally)
+source("helper.functions.R")
+```
+
+
+#Read input
+```{r message=FALSE, warning=FALSE}
+#Read table of observable tryptic peptides
+tryp <- read_tsv("./Input/PA_UniProt.human.20171228.RISnrNF.553smORFs.264contams.Toxoplasmav43.miniTurbo.fasta.EMPAI.tsv")
+
+#Read subcellular localization database
+sl <- read_tsv("./Input/uniprot-human-cellularlocalization.txt") %>% 
+	rename(accession_number = Entry, subcellular.location = 'Subcellular.location',
+	       gene = 'Gene names  (primary )') %>%
+	select(accession_number,subcellular.location,gene)
+
+#Read toxoplasma annotation dataset
+ta <- read_tsv("./Input/toxoplasma_locations.txt")
+
+#Read the metadata
+md <- read_tsv("./Input/metadata.txt")
+
+#Filter criteria for proteins in dataset
+preprocess <- function(x){
+	x <-  x%>% filter(numPepsUnique > 1 & (species %in% c("HUMAN","UNIQUE","Toxoplasma_gondii_GT1"))) %>%
+		separate("id",c("id.nodash",NA),sep = "-",remove=FALSE)%>% 
+		left_join(sl,by=c('id.nodash'='accession_number')) %>% 
+		left_join(ta)
+	x$Location[is.na(x$Location)] <- "Unknown"
+	return(x)
+}
+
+#Read input files
+#toxo.tsv <- read_tsv(file="./Input/toxo.tmt.sdbfrac.txt") %>% preprocess()
+#toxo <- sm_to_gct(toxo.tsv,md,join.by="sample") %>% remove_all_na()
+#toxo.norm <- toxo %>% median_mad_norm()
+
+
+#Read input files and ratio 
+toxo.tsv <- read_tsv(file="./Input/toxo.tmt.sdbfrac.intensities.txt") %>% preprocess()
+toxo <- sm_to_gct(toxo.tsv,md,cols=1:11,join.by="sample") %>% remove_all_na()
+toxo <- toxo %>% gct_ratio(1:11)
+toxo@rdesc <- toxo@rdesc %>% separate("id",c("id.nodash",NA),sep = "-",remove=FALSE)
+toxo.norm <- toxo %>% median_mad_norm()
+
+#Impute for proteins not quantified in 
+toxo <- impute_quantile(toxo,0.01)
+
+```
+
+#Summary statistics
+```{r}
+#Calculate number of proteins per species
+num_toxo <- function(x){
+	tox <- x %>% filter(species == "Toxoplasma_gondii_GT1") %>% nrow
+	hum <- x %>% filter(species == "HUMAN") %>% nrow
+	print(paste0("Counting number of proteins for dataset ", deparse(substitute(x))))
+	print(paste0("Out of ", nrow(x), " proteins ", hum, " are human and ", tox," are from Toxoplasma."))
+}
+
+
+num_toxo(toxo.tsv)
+
+
+#Calculate the number of proteins per subcellular annotation
+locs <- c("Nucleus","Cytoplasm","Endoplasmic reticulum","Mitochondrion","Golgi","Cell membrane","Peroxisome")
+count.locs <- numeric(length(locs))
+
+names(count.locs) <- locs
+for(i in locs){
+	count.locs[i] <- grepl(i,toxo.tsv$subcellular.location) %>% sum
+}
+
+count.locs
+```
+
+#QC
+```{r tmt.distributions}
+#Plot density distributions for TMT intensities
+toxo.melt <- melt.gct(toxo)
+toxo.melt %>% ggplot(aes(x=log10(value),color=id.y)) + geom_density() + labs(x="log10(TMT intensities)") + theme_bw()
+toxo.melt %>% ggplot(aes(x=log10(value),group=id.y,color=treatment)) + geom_density() + labs(x="log10(TMT intensities)") + theme_bw()
+
+#Scatter matrix for turbo samples
+subset_gct(toxo,cid = (toxo@cdesc$treatment == "turborah.toxo" | toxo@cdesc$treatment == "turborah.mock"))@mat %>% ggscatmat()
+
+#Scatter matrix for empty samples
+subset_gct(toxo,cid = (toxo@cdesc$treatment == "turborah.toxo" | toxo@cdesc$treatment == "turbocyto.toxo"))@mat %>% ggscatmat()
+```
+
+#Principal component analysis
+```{r PCA.all}
+toxo.nona <- toxo %>% remove_na(0)
+pca.toxo <- PCA(t(toxo.nona@mat),graph=F,ncp=Inf)
+
+fviz_eig(pca.toxo)
+
+fviz_pca_ind(pca.toxo,col.ind = as.factor(toxo@cdesc$treatment),
+	     mean.point=FALSE,geom="point",
+	     addEllipses = F)+
+	theme_bw()
+```
+
+#T-test analysis using limma
+```{r limma.ratio.ctrl}
+tr <- toxo@cdesc$treatment
+
+
+#Generate the experimental model
+design <- model.matrix(~ 0+ tr)
+
+#Fit the linear model and include the calculated correlation and block structure.
+fit <- lmFit(toxo@mat, design)
+
+#Generate contrasts
+contrast.matrix <- makeContrasts('turborah.vs.turbocyto' = trturborah.toxo-trturbocyto.toxo,
+				 'turborah.toxo.vs.mock' = trturborah.toxo-trturborah.mock,
+				 'turborah.toxo.vs.ctrl' = trturborah.toxo-trctrl,
+				 'turbocyto.toxo.vs.ctrl' = trturbocyto.toxo-trctrl,
+				 'turborah.toxo.vs.all' = trturborah.toxo-trturbocyto.toxo-trturborah.mock,
+				 levels=design)
+fit2 <- contrasts.fit(fit,contrast.matrix)
+
+#Get BH adjusted p-values
+fit.eb <- eBayes(fit2)
+
+results <- make_nested_results(toxo,contrast.matrix,fit.eb)
+results.ratio <- make_results(toxo,contrast.matrix,fit.eb)
+
+map2(results$contrasts,results$data,plot_volcano)
+map2(results$contrasts,results$data,plot_volcano_color,
+     color.list = toxo@rdesc$species,
+     color.name="Species",
+     colors=c("Grey",brewer.pal(n=3,name = "Set2")[1:2]))
+
+map2(results$contrasts,results$data,plot_volcano_color,
+     color.list = grepl("Nucleus",toxo@rdesc$subcellular.location),
+     color.name="Nuclear",
+     colors=c("Grey",brewer.pal(n=3,name = "Set2")[1:2]),
+     alpha.list = case_when(grepl("Nucleus",toxo@rdesc$subcellular.location) ~ 1,
+     		       TRUE ~ 0.005))
+```
+
+
+Write output to local directory
+```{r }
+write_output <- F
+
+if(write_output){
+	out <- left_join(results.ratio,toxo@rdesc)
+	write_csv(out,"toxoplasma.tmt11.results.csv")
+}
+
+```
+
+
+```{r}
+#Compare Turbo-RAH to Turbo-cyto
+plot_correlations(results.ratio,"turborah.toxo.vs.ctrl.logFC","turborah.vs.turbocyto.logFC",
+		  color.list=results.ratio$turborah.vs.turbocyto.Q.Value<0.05 &
+		  		  	results.ratio$turborah.toxo.vs.ctrl.Q.Value<0.05)
+
+plot_correlations(results.ratio,"turborah.toxo.vs.ctrl.logFC","turborah.vs.turbocyto.logFC",
+		  color.list=toxo@rdesc$species,colors=c("Grey",brewer.pal(n=3,name = "Set2")[1:2]),
+		  alpha.list = case_when(toxo@rdesc$species == "HUMAN" ~ 0.005,
+     		       TRUE ~ 1))
+
+#Compare Turbo-RAH to Turbo-cyto, but use turboCyto:ctrl ratio
+plot_correlations(results.ratio,"turbocyto.toxo.vs.ctrl.logFC","turborah.vs.turbocyto.logFC",
+		  color.list=toxo@rdesc$species,colors=c("Grey",brewer.pal(n=3,name = "Set2")[1:2]),
+		  alpha.list = case_when(toxo@rdesc$species == "HUMAN" ~ 0.005,
+     		       TRUE ~ 1))
+
+#Compare Turbo-RAH in toxoplasma to mock
+plot_correlations(results.ratio,"turborah.toxo.vs.ctrl.logFC","turborah.toxo.vs.mock.logFC",
+		  color.list=toxo@rdesc$species,colors=c("Grey",brewer.pal(n=3,name = "Set2")[1:2]),
+		  alpha.list = case_when(toxo@rdesc$species == "HUMAN" ~ 0.05,
+     		       TRUE ~ 1))
+
+#Compare Turbo-RAH in toxo and mock, as well as turbocyto
+plot_correlations(results.ratio,"turborah.vs.turbocyto.logFC","turborah.toxo.vs.mock.logFC",
+		  color.list=toxo@rdesc$species,colors=c("Grey",brewer.pal(n=3,name = "Set2")[1:2]),
+		  alpha.list = case_when(toxo@rdesc$species == "HUMAN" ~ 0.05,
+     		       TRUE ~ 1))
+##High-confidence PVM localizers
+plot_correlations(results.ratio,"turborah.vs.turbocyto.logFC","turborah.toxo.vs.mock.logFC",
+		  color.list=results.ratio$turborah.vs.turbocyto.Q.Value<0.10 &
+		  	results.ratio$turborah.toxo.vs.mock.Q.Value<0.10&
+		  	results.ratio$turborah.toxo.vs.ctrl.logFC>0 &
+		  	results.ratio$turborah.vs.turbocyto.logFC>0,
+		  shape.list=case_when(toxo@rdesc$species == "HUMAN" ~ 16,
+		  		     TRUE ~ 3)  )
+
+##High-confidence PVM localizers and centrosome annotation
+
+labels <- toxo@rdesc$gene
+labels[!toxo@rdesc$id.nodash %in% c("O75396","I3NI02","O60499","Q9NZ43","E9PCW1","O15498","Q13190","O15155")] <- ""
+plot_correlations(results.ratio,"turborah.vs.turbocyto.logFC","turborah.toxo.vs.mock.logFC",
+		  color.list=toxo@rdesc$id.nodash %in%
+		  	c("O75396","I3NI02","O60499","Q9NZ43","E9PCW1","O15498","Q13190","O15155"),
+		  alpha.list = case_when(toxo@rdesc$id.nodash %in%
+		  		       	c("O75396","I3NI02","O60499","Q9NZ43",
+		  		       	  "E9PCW1","O15498","Q13190","O15155") ~ 1,
+		  		       TRUE ~ 0.2),
+		  labels = labels)
+
+
+##Medium-confidence PVM localizers
+plot_correlations(results.ratio,"turborah.vs.turbocyto.logFC","turborah.toxo.vs.mock.logFC",
+		  color.list=results.ratio$turborah.vs.turbocyto.Q.Value<0.10 &
+		  	results.ratio$turborah.toxo.vs.ctrl.logFC>0&
+		  	results.ratio$turborah.vs.turbocyto.logFC>0,
+		  shape.list=case_when(toxo@rdesc$species == "HUMAN" ~ 16,
+		  		     TRUE ~ 3)  )
+
+##SNARE interactions in vesicular transport
+labels <- toxo@rdesc$gene
+labels[!toxo@rdesc$id.nodash %in% c("O75396","I3NI02","O60499","Q9NZ43","E9PCW1","O15498","Q13190","O15155")] <- ""
+plot_correlations(results.ratio,"turborah.vs.turbocyto.logFC","turborah.toxo.vs.mock.logFC",
+		  color.list=toxo@rdesc$id.nodash %in%
+		  	c("O75396","I3NI02","O60499","Q9NZ43","E9PCW1","O15498","Q13190","O15155"),
+		  alpha.list = case_when(toxo@rdesc$id.nodash %in%
+		  		       	c("O75396","I3NI02","O60499","Q9NZ43",
+		  		       	  "E9PCW1","O15498","Q13190","O15155") ~ 1,
+		  		       TRUE ~ 0.2),
+		  labels = labels)
+
+##Low-confidence PVM localizers or multiple localizations
+plot_correlations(results.ratio,"turborah.vs.turbocyto.logFC","turborah.toxo.vs.mock.logFC",
+		  color.list=results.ratio$turborah.vs.turbocyto.Q.Value>0.10 &
+		  	results.ratio$turborah.vs.turbocyto.logFC>-0.5&
+		  	results.ratio$turborah.toxo.vs.ctrl.logFC>0,
+		  shape.list=case_when(toxo@rdesc$species == "HUMAN" ~ 16,
+		  		     TRUE ~ 3)  )
+
+#List of known PV-localizing host proteins
+plot_correlations(results.ratio,"turborah.vs.turbocyto.logFC","turborah.toxo.vs.mock.logFC",
+		  color.list=toxo@rdesc$id.nodash %in%
+		  	c("Q8WUM4","O75340","Q9Y512"),
+		  alpha.list = case_when(toxo@rdesc$id.nodash %in%
+		  		       	c("Q8WUM4","O75340","Q9Y512") ~ 1,
+		  		       TRUE ~ 0.2),
+		  labels = labels)
+
+
+plot_correlations(results.ratio,"turborah.vs.turbocyto.logFC","turborah.toxo.vs.mock.logFC",
+		  color.list=toxo@rdesc$Location,
+		  colors=c(brewer.pal(n=3,name = "Set2")[1:3],"Grey"),
+		  alpha.list = case_when(toxo@rdesc$Location=="Unknown" ~ 0.005,
+     		       TRUE ~ 1))
+
+#Various organelles
+for(i in c("Nucleus","Golgi","Mitochon","Centrosome","Lysoso")){
+	g <- plot_correlations(results.ratio,"turborah.vs.turbocyto.logFC","turborah.toxo.vs.mock.logFC",
+			  color.list=grepl(i,toxo@rdesc$subcellular.location,ignore.case=T),
+			  colors=c("Grey",brewer.pal(n=3,name = "Set2")[2]),
+			  alpha.list = case_when(grepl(i,toxo@rdesc$subcellular.location,ignore.case=T) ~ 0.8,
+			  		       TRUE ~ 0.05),
+			  color.name=i)
+	plot(g)
+}
+
+significant <- results.ratio %>% filter(results.ratio$turborah.vs.turbocyto.logFC>0)
+organelle.results <- data.frame(organelle = character(),
+				p = numeric())
+for(i in c("Nucleus","Golgi","Mitochon","Centrosome","Lysoso")){
+
+	
+	x <- grepl(i,significant$subcellular.location,ignore.case=T) %>% sum
+	m <- grepl(i,toxo@rdesc$subcellular.location,ignore.case=T) %>% sum
+	n <- (!grepl(i,toxo@rdesc$subcellular.location,ignore.case=T)) %>% sum
+	k <- nrow(significant)
+	res <- phyper(x,m,n,k,lower.tail=F)
+	cat(x,m,n,k)
+	organelle.results <- rbind(organelle.results,data.frame(organelle = i,
+								p= res))
+}
+
+
+plot_correlations(results.ratio,"turborah.vs.turbocyto.logFC","turborah.toxo.vs.mock.logFC",
+		  color.list=results.ratio$turborah.toxo.vs.all.Q.Value<0.05&
+		  	results.ratio$turborah.toxo.vs.all.logFC>0)
+
+
+labels <- results.ratios$id
+labels[results.ratios$turboRotenone.v.emptyRotenone.Q.Value>0.05 &
+       	results.ratios$turboCtrl.v.emptyCtrl.Q.Value>0.05] <- ""
+
+plot_correlations(results.ratios,"turboRotenone.v.emptyRotenone.logFC","turboCtrl.v.emptyCtrl.logFC",
+		  color.list=filter(results.ratios,turboRotenone.v.emptyRotenone.Q.Value<0.05 |
+		  		  	turboCtrl.v.emptyCtrl.Q.Value<0.05)$id,
+		  labels = labels)
+
+
+```
