@@ -67,7 +67,7 @@ remove_all_na <- function(x){
 	#	x: a GCT object
 	#Returns:
 	#	A GCT object without proteins that have all missing values
-	x <- subset.gct(x,rid = which(rowSums(is.na(x@mat)) < ncol(x@mat))) 
+	x <- subset_gct(x,rid = which(rowSums(is.na(x@mat)) < ncol(x@mat))) 
 	return(x)
 }
 
@@ -79,7 +79,7 @@ remove_na <- function(x,pct){
 	#Returns:
 	#	A GCT object without proteins that have any missing values
 
-	x <- subset.gct(x,rid = which(rowSums(is.na(x@mat)) <= pct*ncol(x))) 
+	x <- subset_gct(x,rid = which(rowSums(is.na(x@mat)) <= pct*ncol(x))) 
 	return(x)
 }
 
@@ -91,7 +91,7 @@ filter_gct <- function(x,column, value){
 	#	value: The value that should be matched for the filtering
 	#Returns:
 	#	A GCT object with species filtered
-	x <- subset.gct(x,rid = which(x@rdesc[,column] == value)) 
+	x <- subset_gct(x,rid = which(x@rdesc[,column] == value)) 
 	return(x)
 }
 

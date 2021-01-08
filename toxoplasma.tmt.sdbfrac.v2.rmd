@@ -7,6 +7,7 @@ output: html_document
 	
 ```{r setup}
 library(ROCit)
+library(plotROC)
 library(tidyverse)
 library(cmapR)
 library(FactoMineR)
@@ -16,7 +17,11 @@ library(pheatmap)
 library(limma)
 library(GGally)
 library(cowplot)
+library(gprofiler2)
 source("helper.functions.v1.0.R")
+toxo_colors = c("Exported" = "#66C2A5", "Novel PV/PVM" = "#E78AC3",
+		"PV/PVM" = "#FC8D62","Non-secreted" = "#BEBADA")
+toxo_shapes = c("HUMAN"=16,"Toxoplasma_gondii_GT1" = 17, "UNIQUE" = NA)
 ```
 
 
@@ -64,7 +69,8 @@ toxo@rdesc <- toxo@rdesc %>% separate("id",c("id.nodash",NA),sep = "-",remove=FA
 
 
 #Additional filtering criteria
-toxo <- subset_gct(toxo, rid = toxo@rdesc$scoreUnique > 25 & toxo@rdesc$percentCoverage > 1)
+toxo <- subset_gct(toxo, rid = toxo@rdesc$scoreUnique > 25 & toxo@rdesc$percentCoverage > 1 )
+toxo <- subset_gct(toxo, rid = !grepl("Kerat",toxo@rdesc$entry_name))
 
 #Median/mad normalization
 toxo.norm <- toxo %>% median_mad_norm()
@@ -210,15 +216,16 @@ dat <- results$data[[3]] %>%
 		T ~ ""
 	))
 
-g <- ggplot(dat,aes(x= logFC, y = -log10(P.Value))) +
+g <- ggplot(dat,aes(x= logFC, y = -log10(P.Value),shape=species)) +
 	geom_point(color="gray",alpha=0.3)+
 	geom_point(dat %>% filter(Location != "Unknown"),
 		   mapping = aes(x=logFC,y=-log10(P.Value),color = Location))+
-	scale_color_brewer(type="qual")+
+	scale_color_manual(values = toxo_colors)+
 	geom_text_repel(dat, mapping = aes(x=logFC,y=-log10(P.Value),label = label_novel),
 			nudge_y = 1,size=3)+
 	labs(x = "log2 fold-change\n(mT-RAH+Toxo/mT-RAH+Toxo_no_biotin)", y = "-log10 p-value")+
-	theme_bw()
+	theme_bw()+
+	scale_shape_manual(values=toxo_shapes)
 g
 
 dat <- results$data[[3]] %>%
@@ -237,17 +244,20 @@ dat <- dat %>% mutate(gold_list = case_when(
 		!is.na(lopit_prediction) ~ "Non-secreted",
 		T ~ ""
 	))
-g2 <- ggplot(dat,aes(x= logFC, y = -log10(P.Value))) +
+g2 <- ggplot(dat,aes(x= logFC, y = -log10(P.Value),shape=species)) +
 	geom_point(color="gray",alpha=0.3)+
-	geom_point(dat %>% filter(gold_list != ""),
+	geom_point(dat %>% filter(gold_list ==  "Non-secreted"),
 		   mapping = aes(x=logFC,y=-log10(P.Value),color = gold_list))+
-	scale_color_brewer(type="qual")+
+	geom_point(dat %>% filter(gold_list != "" & gold_list != "Non-secreted"),
+		   mapping = aes(x=logFC,y=-log10(P.Value),color = gold_list))+
+	scale_color_manual(values = toxo_colors)+
 	labs(x = "log2 fold-change\n(mT-RAH+Toxo/mT-RAH+Toxo_no_biotin)", y = "-log10 p-value", color = "")+
-	theme_bw()
+	theme_bw()+
+	scale_shape_manual(values=toxo_shapes)
 g2
 ```
 ```{r}
-pdf("./Figures/RAH-Toxo_vs_Nobiotin_Toxoplasma_Only.pdf",4,2.5)
+pdf("./Figures/RAH-Toxo_vs_Nobiotin_Toxoplasma_Only.pdf",4.5,2.5)
 g
 g2
 graphics.off()
@@ -392,6 +402,7 @@ dat <- results.ratio %>%
 	left_join(toxo@rdesc) %>%
 	#filter(species == "HUMAN")  %>%
 	mutate(label_novel = case_when(
+		Location == "Novel PV/PVM" & species == "Toxoplasma_gondii_GT1" ~ str_extract(accession_number,"\\d+$"),
 		Location == "Novel PV/PVM" ~ gene,
 		T ~ ""
 	))
@@ -400,9 +411,10 @@ g1 <- ggplot(dat, aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logF
 	geom_point(color="gray",alpha=0.3)+
 	geom_point(dat %>% filter(Location != "Unknown"),
 		   mapping = aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logFC,color = Location))+
-	scale_color_brewer(type="qual")+
-	geom_text_repel(dat, mapping = aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logFC,label = label_novel),
-			nudge_y = 1,size=3)+
+	scale_color_manual(values=toxo_colors)+
+	geom_text_repel(dat, mapping = aes(x=turborah.vs.turbocyto.logFC,
+					   y=turborah.toxo.vs.mock.logFC,label = label_novel),
+			nudge_x = -2,nudge_y = -0.7,size=3)+
 	labs(x = "log2 fold-change\n(mT-RAH/mT in Infected)", y = "log2 fold-change\n(mT-RAH Infected/Mock)")+
 	theme_bw()+
 	scale_shape_manual(values=c("HUMAN"=16,"Toxoplasma_gondii_GT1" = 17, "UNIQUE" = NA))
@@ -419,7 +431,7 @@ g2 <- ggplot(dat.scaled, aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mo
 	geom_point(color="gray",alpha=0.3)+
 	geom_point(dat.scaled %>% filter(Location != "Unknown"),
 		   mapping = aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logFC,color = Location))+
-	scale_color_brewer(type="qual")+
+	scale_color_manual(values=toxo_colors)+
 	geom_text_repel(dat.scaled, mapping = aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logFC,label = label_novel),
 			nudge_y = 1,size=3)+
 	labs(x = "z-score\n(mT-RAH/mT in Infected)", y = "z-score\n(mT-RAH Infected/Mock)")+
@@ -442,10 +454,11 @@ g3 <- ggplot(dat, aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logF
 	geom_point(color="gray",alpha=0.3)+
 	geom_point(dat %>% filter(gold_list != ""),
 		   mapping = aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logFC,color = gold_list,shape=species))+
-	scale_color_brewer(type="qual")+
+	scale_color_manual(values=toxo_colors)+
 	labs(x = "log2 fold-change\n(mT-RAH/mT in Infected)", y = "log2 fold-change\n(mT-RAH Infected/Mock)")+
 	theme_bw()+
-	scale_shape_manual(values=c("HUMAN"=16,"Toxoplasma_gondii_GT1" = 17, "UNIQUE" = NA))
+	scale_shape_manual(values=toxo_shapes)+
+	geom_vline(xintercept = -0.65,linetype="dotted")
 
 g3
 ```
@@ -520,7 +533,7 @@ dat <- results.ratio %>%
 		T ~ ""
 	))
 
-g<- ggplot(dat %>% filter(species == "Toxoplasma_gondii_GT1"), aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logFC))+
+g1<- ggplot(dat %>% filter(species == "Toxoplasma_gondii_GT1"), aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logFC))+
 	geom_point(color="gray",alpha=0.3)+
 	geom_point(dat %>% filter(Location != "Unknown"),
 		   mapping = aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logFC,color = Location))+
@@ -530,7 +543,7 @@ g<- ggplot(dat %>% filter(species == "Toxoplasma_gondii_GT1"), aes(x=turborah.vs
 	labs(x = "log2 fold-change\n(mT-RAH/mT in Infected)", y = "log2 fold-change\n(mT-RAH Infected/Mock)")+
 	theme_bw()
 
-g
+g1
 
 
 #Plot z-scores instead of logFC
@@ -538,7 +551,7 @@ dat.scaled <- dat
 dat.scaled$turborah.vs.turbocyto.logFC <- scale(dat.scaled$turborah.vs.turbocyto.logFC)
 dat.scaled$turborah.toxo.vs.mock.logFC<- scale(dat.scaled$turborah.toxo.vs.mock.logFC)
 
-g<- ggplot(dat.scaled %>% filter(species == "Toxoplasma_gondii_GT1"), aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logFC))+
+g2<- ggplot(dat.scaled %>% filter(species == "Toxoplasma_gondii_GT1"), aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logFC))+
 	geom_point(color="gray",alpha=0.3)+
 	geom_point(dat.scaled %>% filter(Location != "Unknown" & species == "Toxoplasma_gondii_GT1"),
 		   mapping = aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logFC,color = Location))+
@@ -549,11 +562,13 @@ g<- ggplot(dat.scaled %>% filter(species == "Toxoplasma_gondii_GT1"), aes(x=turb
 	labs(x = "z-score\n(mT-RAH/mT in Infected)", y = "z-score\n(mT-RAH Infected/Mock)")+
 	theme_bw()
 
-g
+g2
+
+
 ```
 
 -y-axis mtRAH+Toxo/mT-RAH+Toxo_no_biotin
-```{r}
+```{r, fig.height=2.5 ,fig.width=5}
 dat <- results.ratio %>%
 	left_join(toxo@rdesc) %>%
 	mutate(label_novel = case_when(
@@ -605,6 +620,30 @@ g3<- ggplot(dat.scaled , aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.ct
 	theme_bw()
 
 g3
+
+# Non-secreted/expected secreted
+#Plot without Novel PV/PVM
+dat <- dat %>% mutate(gold_list = case_when(
+		Location == "Exported" ~ "Exported",
+		Location == "PV/PVM" ~ "PV/PVM",
+		#lopit_prediction %in% c("19S proteasome","40S ribosome","60S ribosome") ~ "",
+		!is.na(lopit_prediction) ~ "Non-secreted",
+		T ~ ""
+	))
+
+
+g4 <- ggplot(dat %>% filter(species == "Toxoplasma_gondii_GT1"),
+	     aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.ctrl.logFC,shape = species))+
+	geom_point(color="gray",alpha=0.3)+
+	geom_point(dat %>% filter(gold_list != ""),
+		   mapping = aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.ctrl.logFC,color = gold_list,shape=species))+
+	scale_color_manual(values=toxo_colors)+
+	labs(x = "log2 fold-change\n(mT-RAH/mT in Infected)", y = "log2 fold-change\n(mT-RAH Infected/No Biotin)")+
+	theme_bw()+
+	scale_shape_manual(values=toxo_shapes)+
+	geom_vline(xintercept = -0.65,linetype="dotted")
+
+g4
 ```
 
 ```{r}
@@ -797,15 +836,15 @@ dat <- results.ratio %>%
 	left_join(toxo@rdesc) %>%
 	filter(species == "Toxoplasma_gondii_GT1")  %>%
 	mutate(gold_list = case_when(
-		Location != "Unknown" ~ "Positive",
-		!is.na(lopit_prediction) ~ "Negative",
+		Location != "Unknown" ~ "PV/PVM",
+		!is.na(lopit_prediction) ~ "Non-secreted",
 		T ~ ""
 	)) %>%
-	filter(gold_list != "") %>%
-	filter(turborah.toxo.vs.mock.P.Value < 0.1)
+	filter(gold_list != "") #%>%
+	#filter(turborah.toxo.vs.mock.P.Value < 0.1)
 
 score <-  dat$turborah.vs.turbocyto.logFC
-class <- dat$gold_list == "Positive"
+class <- dat$gold_list == "PV/PVM"
 roc_empirical <- rocit(score = score, class = class) 
 measures <- plot(roc_empirical)
 cat("Optimal point: ", measures$`optimal Youden Index point`["cutoff"],
@@ -816,31 +855,35 @@ g<- ggplot(results.ratio, aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.m
 	geom_point(color="gray",alpha=0.3)+
 	geom_point(dat,
 		   mapping = aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.mock.logFC,color = gold_list))+
-	scale_color_brewer(type="qual")+
+	scale_color_manual(values=toxo_colors)+
 	labs(x = "log2 fold-change\n(mT-RAH/mT in Infected)", y = "log2 fold-change\n(mT-RAH Infected/Mock)")+
 	theme_bw()
 
 g
 
-g1 <- ggplot(mapping = aes(m= dat$turborah.vs.turbocyto.logFC, d = dat$gold_list == "Positive"))+
+g1 <- ggplot(mapping = aes(m= dat$turborah.vs.turbocyto.logFC, d = dat$gold_list == "PV/PVM"))+
 	labs(x= "1-Specificity (FPR)", y = "Sensitivity (TPR)")+
-	geom_roc(n.cuts = 15)+
+	geom_roc(n.cuts = 15,labelsize=3)+
 	theme_bw()
 g1
 
 g2 <- ggplot(dat, aes(turborah.vs.turbocyto.logFC,after_stat(density),color = gold_list))+
 	geom_freqpoly(binwidth=0.25)+
 	labs(x="log2 fold-change\n(mT-RAH/mT in Infected)")+
-	scale_color_brewer(type="qual")+
-	theme_bw()
+	scale_color_manual(values=toxo_colors)+
+	theme_bw()+
+	geom_vline(xintercept=-0.65,linetype="dotted")
 g2
 ```
 
 ```{r}
 pdf("./Figures/ROC_Analysis_Results.pdf",4,2.5)
 g
-g1
 g2
+graphics.off()
+
+pdf("./Figures/ROC_Analysis_Results_part2.pdf",3,2.5)
+g1
 graphics.off()
 ```
 
@@ -919,3 +962,88 @@ g<- ggplot(results.ratio, aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.m
 
 g
 ```
+
+
+## 6.4 turborah.toxo.vs.ctrl.logFC
+```{r, fig.width=4.5, fig.height=3}
+dat <- results.ratio %>%
+	left_join(toxo@rdesc) %>%
+	filter(species == "Toxoplasma_gondii_GT1")  %>%
+	mutate(gold_list = case_when(
+		Location != "Unknown" ~ "Positive",
+		!is.na(lopit_prediction) ~ "Negative",
+		T ~ ""
+	)) %>%
+	filter(gold_list != "")
+
+score <-  dat$turborah.toxo.vs.ctrl.logFC
+class <- dat$gold_list == "Positive"
+roc_empirical <- rocit(score = score, class = class) 
+measures <- plot(roc_empirical)
+cat("Optimal point: ", measures$`optimal Youden Index point`["cutoff"],
+    "\nAUC: ",measures$AUC)
+
+
+g<- ggplot(results.ratio %>%
+	left_join(toxo@rdesc) %>%
+	filter(species == "Toxoplasma_gondii_GT1"), aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.ctrl.logFC))+
+	geom_point(color="gray",alpha=0.3)+
+	geom_point(dat,
+		   mapping = aes(x=turborah.vs.turbocyto.logFC,y=turborah.toxo.vs.ctrl.logFC,color = gold_list))+
+	scale_color_brewer(type="qual")+
+	labs(x = "log2 fold-change\n(mT-RAH/mT in Infected)", y = "log2 fold-change\n(mT-RAH Infected/No Biotin)")+
+	geom_vline(xintercept = -0.65,linetype="dotted")+
+	geom_hline(yintercept = 2.95,linetype="dotted")+
+	theme_bw()
+
+g
+
+g1 <- ggplot(mapping = aes(m= dat$turborah.toxo.vs.ctrl.logFC, d = dat$gold_list == "Positive"))+
+	labs(x= "1-Specificity (FPR)", y = "Sensitivity (TPR)")+
+	geom_roc(n.cuts = 15,labelsize=3)+
+	theme_bw()
+g1
+```
+
+
+#7. Pathway enrichment analysis
+```{r}
+dat <- results.ratio %>%
+	left_join(toxo@rdesc) %>%
+	filter(species == "HUMAN" & 
+	       	turborah.vs.turbocyto.logFC > -0.65 &
+	       	turborah.toxo.vs.ctrl.adj.P.Val < 0.01 &
+	       	turborah.toxo.vs.ctrl.logFC > 0) %>%
+	arrange(desc(turborah.toxo.vs.mock.logFC)) %>%
+	.[1:50,]
+
+gp <- gost(dat$id.nodash)
+gostplot(gp)
+
+
+g.list <- list()
+col.index <- 1
+for(j in c("GO:BP","GO:CC")){
+	x <- gp$result %>% filter(source==j) %>% arrange(desc(p_value)) %>% top_n(n=-10,wt=p_value) %>% distinct(term_name,.keep_all = T)
+	g1 <- ggplot(x,aes(x=factor(term_name,levels=term_name),y=-log10(p_value)))+
+		geom_col(fill=brewer.pal(5,"Dark2")[col.index])+labs(x=j)+
+		coord_flip()+scale_y_continuous(limits=c(0,4))+theme_cowplot(12)
+	
+	g.list[[j]] <- g1
+	
+	col.index <- col.index + 1
+}
+
+plots <- plot_grid(plotlist = g.list, align = "v",ncol = 1)
+plot(plot_grid(plots, ncol = 1, rel_heights = c(0.1, 1)))
+  
+```
+```{r}
+pdf("./Figures/gprofiler.pathway.analysis.results.pdf",5,5)
+plot(plot_grid(plots, ncol = 1, rel_heights = c(0.1, 1)))
+graphics.off()
+
+write_tsv(dat,"Toxoplasma_Top50_Human_Candidates.tsv")
+write_tsv(gp$result %>% select(source,term_id,term_name,p_value),"gprofiler_pathway_enrichment_Top50.tsv")
+```
+
